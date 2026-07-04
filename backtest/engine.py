@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from data.cleaner import price_limit_pct
+from risk.rules import RiskConfig
 
 BUY_COMMISSION_RATE = 0.0003
 SELL_COMMISSION_RATE = 0.0003
@@ -45,6 +46,7 @@ class Trade:
     net_proceeds: float
     pnl: float
     return_pct: float
+    exit_reason: str = "SIGNAL_SELL"
 
 
 @dataclass
@@ -58,7 +60,7 @@ class BacktestResult:
             return pd.DataFrame(
                 columns=[
                     "entry_date", "entry_price", "exit_date", "exit_price",
-                    "shares", "cost_basis", "net_proceeds", "pnl", "return_pct",
+                    "shares", "cost_basis", "net_proceeds", "pnl", "return_pct", "exit_reason",
                 ]
             )
         return pd.DataFrame([t.__dict__ for t in self.trades])
@@ -75,9 +77,21 @@ def run_backtest(
     slippage_rate: float = SLIPPAGE_RATE,
     lot_size: int = LOT_SIZE,
     risk_free_rate: float = 0.0,
+    risk_config: RiskConfig | None = None,
 ) -> BacktestResult:
     """跑一遍单标的回测。signal_df 需按 date 升序，至少包含 date/close/pct_chg/signal 列
-    (即 strategies.ma_cross_rsi.generate_signals 的输出)。"""
+    (即 strategies.ma_cross_rsi.generate_signals 的输出)。
+
+    risk_config 为 None 时只按策略自身的 BUY/SELL 信号交易(仍然套用 max_position_pct
+    仓位限制)；传入 risk.rules.RiskConfig 时，额外叠加止损/止盈(分批减仓)/组合回撤熔断，
+    这些风控动作优先于策略自身的信号(止损 > 止盈 > 策略SELL信号 > 策略BUY信号)。
+
+    风控动作触发的优先级说明：
+        - 止损/止盈依然受 T+1 和涨跌停限制(现实中止损单在跌停时同样挂不出去成交，
+          这是A股止损策略的一个真实局限，不是本引擎的bug)
+        - 止盈(分批减仓)每笔持仓生命周期只触发一次，触发后不会因为浮盈继续升高而重复减仓
+        - 组合总回撤熔断只阻止"开新仓"(BUY)，不影响止损/止盈/策略SELL信号的平仓动作
+    """
     df = signal_df.sort_values("date").reset_index(drop=True)
     limit = price_limit_pct(symbol)
     limit_tolerance = 0.001  # 涨跌幅在理论涨跌停附近的容差，避免因浮点/复权误差漏判
@@ -86,11 +100,54 @@ def run_backtest(
     shares_held = 0
     entry_date = None
     entry_price = None
+    avg_cost_per_share = None
     cost_basis = 0.0
+    take_profit_triggered = False
     last_valid_price = None
+    portfolio_peak_equity = initial_capital
 
     trades: list[Trade] = []
     equity_records = []
+
+    def _execute_sell(shares_to_sell: int, price: float, date, reason: str):
+        nonlocal cash, shares_held, entry_date, entry_price, cost_basis, avg_cost_per_share, take_profit_triggered
+
+        sell_price = price * (1 - slippage_rate)
+        gross_proceeds = shares_to_sell * sell_price
+        commission = gross_proceeds * sell_commission_rate
+        stamp_duty = gross_proceeds * stamp_duty_rate
+        net_proceeds = gross_proceeds - commission - stamp_duty
+
+        exit_cost_basis = avg_cost_per_share * shares_to_sell
+        pnl = net_proceeds - exit_cost_basis
+        return_pct = pnl / exit_cost_basis if exit_cost_basis else np.nan
+
+        trades.append(
+            Trade(
+                entry_date=entry_date,
+                entry_price=entry_price,
+                exit_date=date,
+                exit_price=sell_price,
+                shares=shares_to_sell,
+                cost_basis=exit_cost_basis,
+                net_proceeds=net_proceeds,
+                pnl=pnl,
+                return_pct=return_pct,
+                exit_reason=reason,
+            )
+        )
+
+        cash += net_proceeds
+        shares_held -= shares_to_sell
+        cost_basis -= exit_cost_basis
+
+        if shares_held <= 0:
+            shares_held = 0
+            entry_date = None
+            entry_price = None
+            avg_cost_per_share = None
+            cost_basis = 0.0
+            take_profit_triggered = False
 
     for _, row in df.iterrows():
         date = row["date"]
@@ -104,56 +161,62 @@ def run_backtest(
             is_limit_up = pd.notna(pct_chg) and pct_chg >= limit - limit_tolerance
             is_limit_down = pd.notna(pct_chg) and pct_chg <= -(limit - limit_tolerance)
 
-            if signal == "BUY" and shares_held == 0 and not is_limit_up:
-                total_equity = cash + shares_held * price
-                investable = min(cash, max_position_pct * total_equity)
-                buy_price = price * (1 + slippage_rate)
-                max_shares = investable / (buy_price * (1 + buy_commission_rate))
-                shares_to_buy = floor(max_shares / lot_size) * lot_size
+            can_sell_today = shares_held > 0 and date != entry_date and not is_limit_down
+            float_pnl_pct = (price - avg_cost_per_share) / avg_cost_per_share if shares_held > 0 else None
 
-                if shares_to_buy >= lot_size:
-                    gross_cost = shares_to_buy * buy_price
-                    commission = gross_cost * buy_commission_rate
-                    total_spent = gross_cost + commission
+            acted = False
 
-                    cash -= total_spent
-                    shares_held = shares_to_buy
-                    entry_date = date
-                    entry_price = buy_price
-                    cost_basis = total_spent
+            if risk_config is not None and can_sell_today and float_pnl_pct <= -risk_config.stop_loss_pct:
+                _execute_sell(shares_held, price, date, reason="STOP_LOSS")
+                acted = True
 
-            elif signal == "SELL" and shares_held > 0 and date != entry_date and not is_limit_down:
-                sell_price = price * (1 - slippage_rate)
-                gross_proceeds = shares_held * sell_price
-                commission = gross_proceeds * sell_commission_rate
-                stamp_duty = gross_proceeds * stamp_duty_rate
-                net_proceeds = gross_proceeds - commission - stamp_duty
+            elif (
+                risk_config is not None
+                and can_sell_today
+                and not take_profit_triggered
+                and float_pnl_pct >= risk_config.take_profit_pct
+            ):
+                reduce_shares = floor((shares_held * risk_config.take_profit_reduce_ratio) / lot_size) * lot_size
+                if reduce_shares >= lot_size:
+                    take_profit_triggered = True
+                    _execute_sell(reduce_shares, price, date, reason="TAKE_PROFIT")
+                    acted = True
 
-                pnl = net_proceeds - cost_basis
-                return_pct = pnl / cost_basis if cost_basis else np.nan
+            if not acted and signal == "SELL" and can_sell_today:
+                _execute_sell(shares_held, price, date, reason="SIGNAL_SELL")
+                acted = True
 
-                trades.append(
-                    Trade(
-                        entry_date=entry_date,
-                        entry_price=entry_price,
-                        exit_date=date,
-                        exit_price=sell_price,
-                        shares=shares_held,
-                        cost_basis=cost_basis,
-                        net_proceeds=net_proceeds,
-                        pnl=pnl,
-                        return_pct=return_pct,
-                    )
-                )
+            if not acted and signal == "BUY" and shares_held == 0 and not is_limit_up:
+                portfolio_drawdown_ok = True
+                if risk_config is not None:
+                    current_equity = cash + shares_held * price
+                    portfolio_peak_equity = max(portfolio_peak_equity, current_equity)
+                    current_drawdown = current_equity / portfolio_peak_equity - 1
+                    portfolio_drawdown_ok = current_drawdown > -risk_config.portfolio_drawdown_halt_pct
 
-                cash += net_proceeds
-                shares_held = 0
-                entry_date = None
-                entry_price = None
-                cost_basis = 0.0
+                if portfolio_drawdown_ok:
+                    total_equity = cash + shares_held * price
+                    investable = min(cash, max_position_pct * total_equity)
+                    buy_price = price * (1 + slippage_rate)
+                    max_shares = investable / (buy_price * (1 + buy_commission_rate))
+                    shares_to_buy = floor(max_shares / lot_size) * lot_size
+
+                    if shares_to_buy >= lot_size:
+                        gross_cost = shares_to_buy * buy_price
+                        commission = gross_cost * buy_commission_rate
+                        total_spent = gross_cost + commission
+
+                        cash -= total_spent
+                        shares_held = shares_to_buy
+                        entry_date = date
+                        entry_price = buy_price
+                        cost_basis = total_spent
+                        avg_cost_per_share = total_spent / shares_to_buy
+                        take_profit_triggered = False
 
         mark_price = last_valid_price if last_valid_price is not None else 0.0
         equity = cash + shares_held * mark_price
+        portfolio_peak_equity = max(portfolio_peak_equity, equity)
         equity_records.append({"date": date, "equity": equity})
 
     equity_curve = pd.DataFrame(equity_records)
