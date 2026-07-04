@@ -18,6 +18,10 @@ data/cache/*
 viz/output/*
 !viz/output/.gitkeep
 
+# Generated daily signal reports
+reports/*
+!reports/.gitkeep
+
 # Secrets / local config
 config/secrets.py
 config/*.local.yml

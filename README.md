@@ -33,8 +33,10 @@
 │   ├── settings.py           # 非敏感参数配置
 │   └── secrets.example.py    # 密钥模板，复制为 secrets.py 后填入真实值(已被 .gitignore 排除)
 ├── tests/           # 单元测试
+├── reports/         # daily_job.py 生成的每日信号摘要(markdown，不入库)
 ├── demo_fetch_data.py          # Demo: 用 akshare 拉取贵州茅台日线数据并存为 csv
 ├── demo_fetch_data_tushare.py  # Demo: 用 Tushare Pro 拉取贵州茅台日线数据并存为 csv
+├── daily_job.py     # 每日收盘后任务：更新数据+重算信号+生成markdown摘要(APScheduler)
 ├── requirements.txt
 └── venv/            # Python 虚拟环境(不入库)
 ```
@@ -266,6 +268,36 @@ streamlit run viz/app.py
 在页面上用黄色提示条标注"当前展示的是示例数据"，不会静默地把示例数据当真实结果展示。
 已经用 Playwright 无头浏览器实际跑起来验证过三个页面都能正常渲染、交互(输入代码查询、
 点击"计算排名"、点击"运行回测")。
+
+## daily_job.py：每日收盘后定时任务(APScheduler)
+
+```bash
+source venv/bin/activate
+
+# 手动触发一次(测试用)：更新 WATCHLIST 里全部股票 -> 重算指标信号 -> 生成markdown摘要
+python daily_job.py
+
+# 跑通后，设成每个交易日固定时间自动运行(默认15:30，Asia/Shanghai时区，周一到周五)：
+python daily_job.py --schedule
+# 自定义时间：
+python daily_job.py --schedule --cron-hour 15 --cron-minute 45
+```
+
+`--schedule` 会启动一个常驻前台进程(APScheduler `BlockingScheduler`)，按 cron 规则
+每个交易日自动跑一次 `run_daily_job()`，Ctrl+C 停止。如果想让它在后台长期运行(比如
+挂在服务器上)，可以用 `nohup python daily_job.py --schedule > daily_job.log 2>&1 &`
+或者用 `screen`/`tmux`/systemd 等常规方式托管这个进程，不需要额外改代码。
+
+流程：对 `daily_job.WATCHLIST`(默认 `["600519", "000858", "601318", "300750", "000001"]`)
+逐个调用 `data.fetcher.fetch_daily_bars` 增量更新数据 → `clean_daily_bars` →
+`add_all_factors` → `generate_signals`，取每只股票"最新一天"的信号，按
+"今日新出现的买卖信号 / 其余无新信号 / 数据获取失败"三类整理成 markdown，保存到
+`reports/daily_signals_YYYYMMDD.md`。单只股票拉取失败不会中断整个任务，只会被记入
+"数据获取失败"分类，其余股票正常处理。
+
+本沙箱环境网络不可用，手动触发测试时5只股票全部拉取失败，摘要如实显示为"数据获取
+失败"而不是报错崩溃或假装有数据——这是预期行为，在你自己能连网的机器上跑就会正常
+输出真实信号摘要。
 
 ## 后续规划
 

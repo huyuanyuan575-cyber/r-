@@ -6,6 +6,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DATA_RAW_DIR = PROJECT_ROOT / "data" / "raw"
 DATA_CACHE_DIR = PROJECT_ROOT / "data" / "cache"
+REPORTS_DIR = PROJECT_ROOT / "reports"
 
 # 回测默认参数
 BACKTEST_START_DATE = "20230101"
