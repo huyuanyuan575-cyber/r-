@@ -6,7 +6,7 @@ import pandas as pd
 OHLCV_COLUMNS = ["open", "high", "low", "close", "volume", "amount"]
 
 
-def _price_limit_pct(symbol: str) -> float:
+def price_limit_pct(symbol: str) -> float:
     """A股涨跌停幅度的粗略规则。
 
     注意：ST/*ST 股票涨跌停为 5%，但本项目当前数据源未附带 ST 状态，
@@ -50,7 +50,7 @@ def clean_daily_bars(
 
     df["pct_chg"] = df["close"].pct_change()
 
-    limit = _price_limit_pct(symbol)
+    limit = price_limit_pct(symbol)
     df["is_price_anomaly"] = df["pct_chg"].abs() > (limit + anomaly_tolerance)
     # 停牌前后缺少可比较的前一日收盘价，无法判断涨跌幅，不计入异常
     df.loc[df["pct_chg"].isna(), "is_price_anomaly"] = False

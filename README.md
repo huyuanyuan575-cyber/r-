@@ -20,9 +20,11 @@
 │   ├── ma_cross_rsi.py       # MA5/MA20金叉死叉 + 量能确认 + RSI超买 的买卖点策略
 │   └── multi_factor_score.py # 估值(行业内PE)+动量+波动率 多因子长线选股打分
 ├── backtest/        # 回测引擎：撮合、持仓、绩效统计
+│   └── engine.py    # 单标的回测：手续费+滑点+T+1+涨跌停+仓位限制，输出净值曲线与指标
 ├── risk/            # 风控模块：仓位限制、止损止盈、风险指标
 ├── viz/             # 可视化：K线图、净值曲线、因子分布等
 │   ├── plot_signals.py # 在价格走势图上标注买卖点
+│   ├── plot_equity.py  # 绘制回测净值曲线(含最大回撤区间标注)
 │   └── output/         # 生成的图表(不入库)
 ├── config/          # 配置：数据源密钥、回测参数等
 │   ├── settings.py           # 非敏感参数配置
@@ -171,10 +173,38 @@ python tests/test_multi_factor_score.py
 信息，PE和价格走势为示意性数值，不代表真实行情——正式使用时不传这两个参数即可，
 自动走真实的 `data.fetcher`/`data.fundamentals`）。
 
+## backtest/ 模块：单标的回测引擎(交易成本+滑点+T+1+涨跌停+仓位限制)
+
+```bash
+source venv/bin/activate
+python demo_backtest.py
+python tests/test_backtest.py
+```
+
+`backtest.engine.run_backtest(signal_df, symbol, initial_capital=100_000, max_position_pct=0.2)`
+输入 `strategies` 产出的信号表(date/close/pct_chg/signal)，模拟以下真实交易约束：
+
+- 交易成本：买入手续费万3；卖出手续费万3 + 印花税千1
+- 滑点：按成交价上下浮动0.1%(买入更贵、卖出更便宜地成交)
+- A股 T+1：当天买入的股票当天不能卖出
+- 涨跌停：当天涨跌幅达到该股票理论涨跌停幅度(复用 `data.cleaner.price_limit_pct`)时，
+  对应方向视为无法成交(涨停不能买/跌停不能卖)
+- 仓位限制：单次买入不超过当前总资产的 `max_position_pct`，且按A股100股一手取整
+
+返回 `BacktestResult(equity_curve, trades, metrics)`，`metrics` 含年化收益率、最大回撤
+(及起止日期)、夏普比率、胜率、盈亏比、交易次数；`backtest.engine.format_report()` 输出
+文字报告，`viz.plot_equity.plot_equity_curve()` 画净值曲线并标出最大回撤区间。
+
+**一个跑真实数据大概率会遇到的真实问题**：贵州茅台股价高(~1200-2400元/股)，A股100股
+一手，`demo_backtest.py` 用10万本金+20%仓位上限跑示例数据时发现**买1手都不够钱**
+(20%×10万=2万，但100股要花17万+)，导致0笔交易——这不是策略或引擎的问题，是"高价股+
+100股一手+这个仓位上限+这个本金"组合本身的资金约束问题，值得在正式使用前想清楚(调大
+本金、放宽仓位上限、或只用于低价股)。`demo_backtest.py` 里额外跑了一段手工构造的
+"引擎自检"序列，证明整套回测机制在能正常成交的情况下是通的。
+
 ## 后续规划
 
 - `factors/`: 后续可以补充更多基本面因子(市净率/ROE等)
 - `strategies/`: 可以补充仓位管理(而不仅是信号)、组合层面的选股+择时结合
-- `backtest/`: 事件驱动或向量化回测引擎，把 strategies 的信号接入撮合和绩效统计
-- `risk/`: 仓位管理与止损止盈规则
-- `viz/`: 补充K线图(蜡烛图)、净值曲线绘制
+- `risk/`: 止损止盈、组合层面回撤熔断等规则，整合进 backtest 引擎
+- `viz/`: 补充K线图(蜡烛图)
