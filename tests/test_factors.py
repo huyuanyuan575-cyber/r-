@@ -11,7 +11,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from factors.technical import bollinger_bands, macd, moving_average, rsi
+from factors.technical import bollinger_bands, macd, moving_average, rsi, volume_ratio
 
 
 def _make_close_df(closes):
@@ -35,6 +35,24 @@ def test_rsi_all_gains_is_100():
     df = rsi(_make_close_df(closes), window=14)
     assert (df["rsi14"].dropna() == 100).all(), "连续上涨时 RSI 应恒为100"
     print("test_rsi_all_gains_is_100: PASS")
+
+
+def test_rsi_flat_price_is_50():
+    # 窗口内价格完全走平(无涨无跌)，涨跌力量相等，RSI 应为50而不是100
+    closes = [100] * 20
+    df = rsi(_make_close_df(closes), window=14)
+    assert (df["rsi14"].dropna() == 50).all(), "价格完全走平时 RSI 应恒为50"
+    print("test_rsi_flat_price_is_50: PASS")
+
+
+def test_volume_ratio_matches_manual_calc():
+    volumes = [100, 200, 300, 400, 500, 600, 700]
+    df = pd.DataFrame({"date": pd.bdate_range("2024-01-02", periods=len(volumes)), "volume": volumes})
+    df = volume_ratio(df, window=5)
+    # 第7天(index 6, volume=700)：过去5日(index 1-5: 200,300,400,500,600)均量400
+    expected_last = 700 / ((200 + 300 + 400 + 500 + 600) / 5)
+    assert np.isclose(df["volume_ratio5"].iloc[6], expected_last)
+    print("test_volume_ratio_matches_manual_calc: PASS")
 
 
 def test_bollinger_bands_ordering():
@@ -61,6 +79,8 @@ def test_macd_hist_equals_twice_dif_minus_dea():
 def main():
     test_moving_average_matches_manual_calc()
     test_rsi_all_gains_is_100()
+    test_rsi_flat_price_is_50()
+    test_volume_ratio_matches_manual_calc()
     test_bollinger_bands_ordering()
     test_macd_hist_equals_twice_dif_minus_dea()
     print("\n全部测试通过。")

@@ -47,8 +47,12 @@ def rsi(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
     avg_loss = loss.ewm(alpha=1 / window, min_periods=window, adjust=False).mean()
     rs = avg_gain / avg_loss
     df[f"rsi{window}"] = 100 - (100 / (1 + rs))
-    # 平均跌幅为0(持续上涨)时 RS 为 inf，RSI 应为100
-    df.loc[avg_loss == 0, f"rsi{window}"] = 100
+    # 平均跌幅为0时 RS 为 inf：若同时平均涨幅也为0(窗口内价格完全走平)，涨跌力量相等，RSI应为50；
+    # 否则(持续上涨、无下跌)RSI应为100。
+    flat_price = (avg_gain == 0) & (avg_loss == 0)
+    only_gains = (avg_loss == 0) & ~flat_price
+    df.loc[flat_price, f"rsi{window}"] = 50
+    df.loc[only_gains, f"rsi{window}"] = 100
     return df
 
 
