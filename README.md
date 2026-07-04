@@ -12,11 +12,13 @@
 │   ├── fetcher.py   # 批量拉取日线OHLCV(前复权)，带本地增量缓存
 │   ├── calendar.py  # A股交易日历，用于识别停牌造成的缺失交易日
 │   ├── cleaner.py   # 数据清洗：停牌标记为NaN、涨跌停幅度异常值标记
-│   └── update.py    # 增量更新脚本：只补齐本地缓存到今天之间缺失的数据
+│   ├── update.py    # 增量更新脚本：只补齐本地缓存到今天之间缺失的数据
+│   └── fundamentals.py # 行业分类 + PE(TTM)获取，供多因子选股模型使用
 ├── factors/         # 技术指标与因子计算
 │   └── technical.py # MA/EMA/MACD/RSI/布林带/动量/波动率/量比
 ├── strategies/       # 选股策略与买卖点信号生成逻辑
-│   └── ma_cross_rsi.py # MA5/MA20金叉死叉 + 量能确认 + RSI超买 的买卖点策略
+│   ├── ma_cross_rsi.py       # MA5/MA20金叉死叉 + 量能确认 + RSI超买 的买卖点策略
+│   └── multi_factor_score.py # 估值(行业内PE)+动量+波动率 多因子长线选股打分
 ├── backtest/        # 回测引擎：撮合、持仓、绩效统计
 ├── risk/            # 风控模块：仓位限制、止损止盈、风险指标
 ├── viz/             # 可视化：K线图、净值曲线、因子分布等
@@ -145,10 +147,34 @@ python tests/test_strategies.py
 `viz.plot_signals.plot_price_with_signals` 把买卖点画在价格走势图上，保存到
 `viz/output/600519_signals.png`。
 
+## strategies/ 模块：估值 + 动量 + 波动率 多因子长线选股
+
+```bash
+source venv/bin/activate
+python demo_multi_factor_score.py
+python tests/test_multi_factor_score.py
+```
+
+`strategies.multi_factor_score.score_stocks(symbols, date, weights=None)` 输入一批
+股票代码和日期，输出这一天所有股票的因子得分与排名：
+
+- **valuation(估值)**：PE(TTM)，越低越好，在**同行业内**做 zscore(-PE)（不跨行业比较
+  绝对估值高低，因为不同行业合理估值中枢本来不同）；某行业若只有1只样本股，无从比较，记为中性0
+- **momentum(动量)**：过去60个交易日涨幅，越高越好，在整个输入股票池内做 zscore
+- **volatility(波动率)**：过去60个交易日收益率标准差，越低越好，在整个股票池内做 zscore(-波动率)
+- 三项按权重(默认各1/3)加权求和得到 `composite_score`，从高到低排名
+
+新增 `data.fundamentals` 模块负责真实基本面数据：`get_industry`(东方财富个股信息，
+只能取当前分类) + `get_pe_on_date`(百度股市通历史PE(TTM)序列)，两者都做了本地缓存。
+`score_stocks` 的 `ohlcv_provider`/`fundamentals_provider` 参数可替换默认的真实数据源，
+`demo_multi_factor_score.py` 就是用这两个参数换成示例数据演示的（行业分类是真实公开
+信息，PE和价格走势为示意性数值，不代表真实行情——正式使用时不传这两个参数即可，
+自动走真实的 `data.fetcher`/`data.fundamentals`）。
+
 ## 后续规划
 
-- `factors/`: 后续可以补充基本面因子(市盈率/市净率等)、多因子打分/排序
-- `strategies/`: 可以补充仓位管理(而不仅是信号)、多股票组合选股
+- `factors/`: 后续可以补充更多基本面因子(市净率/ROE等)
+- `strategies/`: 可以补充仓位管理(而不仅是信号)、组合层面的选股+择时结合
 - `backtest/`: 事件驱动或向量化回测引擎，把 strategies 的信号接入撮合和绩效统计
 - `risk/`: 仓位管理与止损止盈规则
 - `viz/`: 补充K线图(蜡烛图)、净值曲线绘制
