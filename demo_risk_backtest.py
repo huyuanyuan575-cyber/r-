@@ -66,7 +66,6 @@ def main():
 
     baseline = run_backtest(signal_df, SYMBOL, initial_capital=100_000, max_position_pct=0.2)
     risk_config = RiskConfig(
-        max_position_pct=0.2,
         stop_loss_pct=0.08,
         take_profit_pct=0.30,
         take_profit_reduce_ratio=0.5,

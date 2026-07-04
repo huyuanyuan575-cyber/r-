@@ -24,6 +24,9 @@ config/*.local.yml
 config/*.local.yaml
 .env
 
+# Streamlit local config/cache
+.streamlit/
+
 # Editors / OS
 .vscode/
 .idea/

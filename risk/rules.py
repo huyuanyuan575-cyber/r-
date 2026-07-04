@@ -1,7 +1,9 @@
 """风控规则配置，供 backtest.engine.run_backtest(risk_config=...) 使用。
 
-规则：
-    - max_position_pct：单只股票最大仓位不超过总资金(当前总资产)的这个比例
+注意：单只股票最大仓位上限由 run_backtest 自身的 max_position_pct 参数控制(它在
+没有任何风控规则时也需要生效，属于回测引擎的基础仓位管理，不放在这里)。RiskConfig
+只承载"额外叠加"的风控规则：
+
     - stop_loss_pct：单只股票浮亏超过这个比例时，强制卖出剩余全部持仓
     - take_profit_pct / take_profit_reduce_ratio：单只股票浮盈超过 take_profit_pct 时，
       按 take_profit_reduce_ratio 卖出对应比例的持仓(分批减仓)；每一笔持仓生命周期内
@@ -15,7 +17,6 @@ from dataclasses import dataclass
 
 @dataclass
 class RiskConfig:
-    max_position_pct: float = 0.2
     stop_loss_pct: float = 0.08
     take_profit_pct: float = 0.30
     take_profit_reduce_ratio: float = 0.5
