@@ -16,9 +16,12 @@
 ├── factors/         # 技术指标与因子计算
 │   └── technical.py # MA/EMA/MACD/RSI/布林带/动量/波动率/量比
 ├── strategies/       # 选股策略与买卖点信号生成逻辑
+│   └── ma_cross_rsi.py # MA5/MA20金叉死叉 + 量能确认 + RSI超买 的买卖点策略
 ├── backtest/        # 回测引擎：撮合、持仓、绩效统计
 ├── risk/            # 风控模块：仓位限制、止损止盈、风险指标
 ├── viz/             # 可视化：K线图、净值曲线、因子分布等
+│   ├── plot_signals.py # 在价格走势图上标注买卖点
+│   └── output/         # 生成的图表(不入库)
 ├── config/          # 配置：数据源密钥、回测参数等
 │   ├── settings.py           # 非敏感参数配置
 │   └── secrets.example.py    # 密钥模板，复制为 secrets.py 后填入真实值(已被 .gitignore 排除)
@@ -116,10 +119,36 @@ DataFrame，直接在停牌日（NaN）上做 rolling/ewm 计算，不做人工�
 在网络不可用时使用的随机游走示例数据生成器，仅用于验证清洗/因子逻辑本身，不代表
 真实行情，正式使用请用 `data.fetcher.batch_fetch_daily_bars` 拉取真实数据。
 
+## strategies/ 模块：MA金叉死叉 + 量能 + RSI 买卖点策略
+
+```bash
+source venv/bin/activate
+python demo_strategy.py
+python tests/test_strategies.py
+```
+
+`strategies.ma_cross_rsi.generate_signals(df)` 输入需已带 `ma5/ma20/rsi14/volume_ratio5`
+列(即 `factors.technical.add_all_factors` 的输出)，输出新增 `signal` 列：
+
+- **BUY**：当日 MA5 上穿 MA20(金叉)，且当日成交量 > 过去5日平均成交量的1.5倍
+- **SELL**：当日 MA5 下穿 MA20(死叉)，或者当日 RSI14 > 80(超买)；同一天两种条件都满足时优先判 SELL
+- 其余 **HOLD**；指标历史不足(NaN)的交易日一律 HOLD
+
+**无未来函数**：金叉/死叉只比较当天与前一天的 MA5-MA20 差值符号，量比/RSI 也只用当日及
+之前的数据滚动计算，整个函数不含任何 `shift(-1)` 之类的向未来看操作。
+`tests/test_strategies.py::test_no_look_ahead_bias` 专门验证了这一点：把数据截断到
+第 t 天重新算一遍信号，与用完整数据算出的第 t 天信号必须完全一致——如果偷看了未来
+数据，这个测试会失败。
+
+`demo_strategy.py` 会尝试拉取真实茅台近一年数据，网络不可用时回退到示例数据（仅演示
+流程，不代表真实行情），打印全部触发的 BUY/SELL 信号日期，并调用
+`viz.plot_signals.plot_price_with_signals` 把买卖点画在价格走势图上，保存到
+`viz/output/600519_signals.png`。
+
 ## 后续规划
 
 - `factors/`: 后续可以补充基本面因子(市盈率/市净率等)、多因子打分/排序
-- `strategies/`: 基于因子的选股与择时策略
-- `backtest/`: 事件驱动或向量化回测引擎
+- `strategies/`: 可以补充仓位管理(而不仅是信号)、多股票组合选股
+- `backtest/`: 事件驱动或向量化回测引擎，把 strategies 的信号接入撮合和绩效统计
 - `risk/`: 仓位管理与止损止盈规则
-- `viz/`: 基于 matplotlib 的K线图、净值曲线绘制
+- `viz/`: 补充K线图(蜡烛图)、净值曲线绘制
