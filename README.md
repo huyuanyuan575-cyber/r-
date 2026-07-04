@@ -13,7 +13,8 @@
 │   ├── calendar.py  # A股交易日历，用于识别停牌造成的缺失交易日
 │   ├── cleaner.py   # 数据清洗：停牌标记为NaN、涨跌停幅度异常值标记
 │   └── update.py    # 增量更新脚本：只补齐本地缓存到今天之间缺失的数据
-├── factors/         # 技术指标与因子计算(如均线、MACD、动量因子等)
+├── factors/         # 技术指标与因子计算
+│   └── technical.py # MA/EMA/MACD/RSI/布林带/动量/波动率/量比
 ├── strategies/       # 选股策略与买卖点信号生成逻辑
 ├── backtest/        # 回测引擎：撮合、持仓、绩效统计
 ├── risk/            # 风控模块：仓位限制、止损止盈、风险指标
@@ -91,9 +92,33 @@ python -m data.update
 python tests/test_data_pipeline.py
 ```
 
+## factors/ 模块：技术指标计算
+
+```bash
+source venv/bin/activate
+python demo_factors.py
+python tests/test_factors.py
+```
+
+`factors.technical` 提供的函数都接收 `data.cleaner.clean_daily_bars` 清洗后的
+DataFrame，直接在停牌日（NaN）上做 rolling/ewm 计算，不做人工填充：
+
+- `moving_average` / `ema`：简单/指数移动平均线
+- `macd`：DIF、DEA、MACD柱
+- `rsi`：Wilder 平滑 RSI
+- `bollinger_bands`：布林带上中下轨
+- `momentum`：N日动量(收益率)因子
+- `volatility`：N日收益率滚动标准差
+- `volume_ratio`：量比(当日成交量/过去N日均量)
+- `add_all_factors`：一次性叠加以上全部默认因子
+
+`data.sample_data.build_sample_raw` 是给 `demo_clean_data.py` / `demo_factors.py`
+在网络不可用时使用的随机游走示例数据生成器，仅用于验证清洗/因子逻辑本身，不代表
+真实行情，正式使用请用 `data.fetcher.batch_fetch_daily_bars` 拉取真实数据。
+
 ## 后续规划
 
-- `factors/`: 实现常用技术指标(MA、MACD、RSI等)与自定义因子
+- `factors/`: 后续可以补充基本面因子(市盈率/市净率等)、多因子打分/排序
 - `strategies/`: 基于因子的选股与择时策略
 - `backtest/`: 事件驱动或向量化回测引擎
 - `risk/`: 仓位管理与止损止盈规则

@@ -6,12 +6,11 @@
    肉眼确认清洗逻辑是否合理。
 """
 
-import numpy as np
 import pandas as pd
 
-from data.calendar import get_trade_calendar
 from data.cleaner import clean_daily_bars
-from data.fetcher import STANDARD_COLUMNS, batch_fetch_daily_bars
+from data.fetcher import batch_fetch_daily_bars
+from data.sample_data import build_sample_raw
 
 SYMBOLS = ["600519", "000858", "601318", "300750", "000001"]
 
@@ -29,38 +28,6 @@ def try_real_fetch():
         print(f"真实拉取失败（本沙箱环境网络策略限制了 akshare 的数据源域名）: {exc}")
         print("这段代码在你本机（网络不受限）运行时应能正常工作。")
         return None
-
-
-def build_sample_raw(symbol: str) -> pd.DataFrame:
-    """构造一段包含停牌缺口和异常涨跌幅的示例原始数据，用于演示清洗逻辑。"""
-    dates = pd.date_range("2024-01-02", periods=20, freq="B")
-    # 模拟停牌：抽掉第 8、9 个交易日（假设公司因重大事项停牌两天）
-    dates = dates.delete([7, 8])
-
-    rng = np.random.default_rng(seed=42)
-    base_price = 1700.0
-    closes = base_price + np.cumsum(rng.normal(0, 5, size=len(dates)))
-
-    df = pd.DataFrame(
-        {
-            "date": dates,
-            "symbol": symbol,
-            "open": closes - 2,
-            "high": closes + 5,
-            "low": closes - 5,
-            "close": closes,
-            "volume": rng.integers(1_000_000, 5_000_000, size=len(dates)),
-            "amount": rng.integers(1_000_000_000, 5_000_000_000, size=len(dates)),
-        }
-    )
-
-    # 人为制造一次异常涨跌幅（例如疑似复权错误/数据错误）：主板股票单日涨跌不该超过10%
-    anomaly_idx = 10
-    df.loc[anomaly_idx, "close"] = df.loc[anomaly_idx - 1, "close"] * 1.25
-    df.loc[anomaly_idx, "high"] = df.loc[anomaly_idx, "close"] + 5
-    df.loc[anomaly_idx, "open"] = df.loc[anomaly_idx - 1, "close"] * 1.02
-
-    return df[STANDARD_COLUMNS]
 
 
 def demo_cleaning():
