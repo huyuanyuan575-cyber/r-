@@ -2,3 +2,4 @@ pandas==3.0.3
 numpy==2.4.6
 akshare==1.18.64
 matplotlib==3.11.0
+tushare==1.4.29

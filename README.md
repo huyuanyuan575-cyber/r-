@@ -18,7 +18,8 @@
 │   ├── settings.py           # 非敏感参数配置
 │   └── secrets.example.py    # 密钥模板，复制为 secrets.py 后填入真实值(已被 .gitignore 排除)
 ├── tests/           # 单元测试
-├── demo_fetch_data.py  # Demo: 拉取贵州茅台日线数据并存为 csv
+├── demo_fetch_data.py          # Demo: 用 akshare 拉取贵州茅台日线数据并存为 csv
+├── demo_fetch_data_tushare.py  # Demo: 用 Tushare Pro 拉取贵州茅台日线数据并存为 csv
 ├── requirements.txt
 └── venv/            # Python 虚拟环境(不入库)
 ```
@@ -40,6 +41,21 @@ python demo_fetch_data.py
 
 脚本会通过 akshare 拉取贵州茅台(600519)最近一年的日线数据，保存到
 `data/raw/600519_daily.csv`，并打印前 5 行用于确认数据可用。
+
+### Tushare 数据源
+
+项目同时接入了 [Tushare Pro](https://tushare.pro) 作为第二数据源，用法见
+`.claude/skills/tushare-data/SKILL.md`。使用前需要：
+
+```bash
+cp config/secrets.example.py config/secrets.py
+# 编辑 config/secrets.py，填入你在 tushare.pro 个人主页获取的 TUSHARE_TOKEN
+
+source venv/bin/activate
+python demo_fetch_data_tushare.py
+```
+
+脚本会保存到 `data/raw/600519_daily_tushare.csv`。
 
 ## 后续规划
 
